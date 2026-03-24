@@ -175,7 +175,7 @@ int main(int argc, char **argv)
     // ------------------ 3. ADIOS2 并行写入 -------------------
     adios2::ADIOS adios(MPI_COMM_WORLD);
 
-    const std::string fname = "test_prodm_mpi.bp";
+    const std::string fname = "data/test_prodm_mpi.bp";
 
     {
         auto io = adios.DeclareIO("io_prodm_write");

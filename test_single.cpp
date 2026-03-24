@@ -110,7 +110,7 @@ int main(int argc, char **argv)
                   << " (elements = " << N << ")" << std::endl;
     }
 
-    const std::string fname = "test_prodm_single.bp";
+    const std::string fname = "data/test_prodm_single.bp";
 
     {
         adios2::ADIOS adios(MPI_COMM_WORLD);
