@@ -1,4 +1,3 @@
-#include <mpi.h>
 #include <adios2.h>
 
 #include <iostream>
@@ -55,39 +54,30 @@ std::string DefaultDatasetPath()
 
 int main(int argc, char **argv)
 {
-    MPI_Init(&argc, &argv);
-
-    int rank = 0, size = 1;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    if (size != 1 && rank == 0)
-    {
-        std::cerr << "[Info] rank = " << size << std::endl;
-    }
-
     std::string binPath = DefaultDatasetPath();
+
     if (argc > 1)
     {
         binPath = argv[1];
     }
 
+    // 100 x 500 x 500 float32
     const std::size_t NZ = 100;
     const std::size_t NY = 500;
     const std::size_t NX = 500;
-    const std::size_t N = NZ * NY * NX;
+    const std::size_t N  = NZ * NY * NX;
     const std::size_t expectedBytes = N * sizeof(float);
 
     std::vector<float> data;
-    if (rank == 0)
     {
         std::ifstream ifs(binPath, std::ios::binary);
         if (!ifs)
         {
             std::cerr << "Error: Cannot open file " << binPath << std::endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
+            return 1;
         }
 
+        // Read
         ifs.seekg(0, std::ios::end);
         std::streamsize fileSize = ifs.tellg();
         ifs.seekg(0, std::ios::beg);
@@ -100,20 +90,21 @@ int main(int argc, char **argv)
         }
 
         data.resize(N);
-        if (!ifs.read(reinterpret_cast<char *>(data.data()), expectedBytes))
+        if (!ifs.read(reinterpret_cast<char*>(data.data()), expectedBytes))
         {
             std::cerr << "Error: Fail to read file: " << binPath << std::endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
+            return 1;
         }
 
         std::cout << "Read: " << binPath
                   << " (elements = " << N << ")" << std::endl;
     }
 
-    const std::string fname = "test_prodm_single.bp";
+    const std::string fname = "data/test_prodm_serial.bp";
 
+    // ------------------ Write -------------------
     {
-        adios2::ADIOS adios(MPI_COMM_WORLD);
+        adios2::ADIOS adios;
         auto io = adios.DeclareIO("io_prodm_write");
 
         adios2::Dims shape{NZ, NY, NX};
@@ -129,20 +120,20 @@ int main(int argc, char **argv)
 
         auto engine = io.Open(fname, adios2::Mode::Write);
 
-        if (rank == 0)
-            std::cout << "Start writing ProDM BP file: " << fname << std::endl;
+        std::cout << "Start writing ProDM BP file: " << fname << std::endl;
 
         engine.BeginStep();
         engine.Put(var, data.data());
         engine.EndStep();
+
         engine.Close();
 
-        if (rank == 0)
-            std::cout << "Write complete: " << fname << std::endl;
+        std::cout << "Write complete: " << fname << std::endl;
     }
 
+    // ------------------ Read -------------------
     {
-        adios2::ADIOS adios(MPI_COMM_WORLD);
+        adios2::ADIOS adios;
         auto io = adios.DeclareIO("io_prodm_read");
         auto engine = io.Open(fname, adios2::Mode::Read);
 
@@ -153,15 +144,15 @@ int main(int argc, char **argv)
             auto var = io.InquireVariable<float>("field");
             if (!var)
             {
-                if (rank == 0)
-                    std::cerr << "Error: Cannot find 'field' " << std::endl;
+                std::cerr << "Error: Cannot find 'field' " << std::endl;
                 break;
             }
 
             adios2::Operator prodmOp =
-                adios.DefineOperator("op_prodm", "prodm", {{"accuracy", "1e-1"}});
+                adios.DefineOperator("op_prodm", "prodm", {{"accuracy", "1e-3"}});
 
             var.AddOperation(prodmOp, {});
+
             var.SetSelection({{0, 0, 0}, {NZ, NY, NX}});
             engine.Get(var, rec.data(), adios2::Mode::Sync);
             engine.EndStep();
@@ -169,27 +160,23 @@ int main(int argc, char **argv)
 
         engine.Close();
 
-        if (rank == 0)
+        double max_abs_err = 0.0;
+        long double mse = 0.0L;
+
+        for (std::size_t i = 0; i < N; ++i)
         {
-            double max_abs_err = 0.0;
-            long double mse = 0.0L;
-
-            for (std::size_t i = 0; i < N; ++i)
-            {
-                double e = static_cast<double>(rec[i]) - static_cast<double>(data[i]);
-                double ae = std::abs(e);
-                if (ae > max_abs_err)
-                    max_abs_err = ae;
-                mse += static_cast<long double>(e) * static_cast<long double>(e);
-            }
-            mse /= static_cast<long double>(N);
-
-            std::cout << "Test Completed.\n";
-            std::cout << "Max abs error = " << max_abs_err << "\n";
-            std::cout << "MSE          = " << static_cast<double>(mse) << "\n";
+            double e = static_cast<double>(rec[i]) - static_cast<double>(data[i]);
+            double ae = std::abs(e);
+            if (ae > max_abs_err)
+                max_abs_err = ae;
+            mse += static_cast<long double>(e) * static_cast<long double>(e);
         }
+        mse /= static_cast<long double>(N);
+
+        std::cout << "Test Completed.\n";
+        std::cout << "Max abs error = " << max_abs_err << "\n";
+        std::cout << "MSE          = " << static_cast<double>(mse) << "\n";
     }
 
-    MPI_Finalize();
     return 0;
 }
